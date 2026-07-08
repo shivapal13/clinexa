@@ -17,7 +17,7 @@ class DoctorProfileUpdate(BaseModel):
     experience:int | None = None
     fees:float | None = None
     city:str | None = None
-    bio:str | None = None
+    bio:str | None= None
     hospital_name:str | None = None
 
     class Config:

@@ -1,7 +1,7 @@
 from fastapi import FastAPI,HTTPException,status,Depends,APIRouter,Response
 from sqlalchemy.orm import Session
 from app.schemas import doctor_schema
-from app.database import get_db
+from app.core.database import get_db
 from app.core import security
 from app.models import doctor_model,user
 
@@ -15,7 +15,7 @@ def CreateDoctorProfile(doctor_data:doctor_schema.DoctorProfileCreate,
                         db:Session=Depends(get_db),
                         current_user=Depends(security.get_current_user)):
     
-    if(current_user.role!="doctor"):
+    if(current_user.role!="Doctor"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
                             detail="only doctors are allowed"
                             )

@@ -1,7 +1,7 @@
 from fastapi import FastAPI,HTTPException,status,Depends,APIRouter
 from app.schemas import prescription_schema
 from app.models import prescription_model,doctor_model,medicalrecord_model,patient_model
-from app.database import get_db
+from app.core.database import get_db
 from sqlalchemy.orm import Session
 from app.core import security
 

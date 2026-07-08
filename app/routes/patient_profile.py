@@ -1,6 +1,6 @@
 from fastapi import FastAPI,APIRouter,HTTPException,status,Depends,Response
 from sqlalchemy.orm import Session
-from app.database import get_db
+from app.core.database import get_db
 from app.models import patient_model
 from app.schemas import patient_schema
 from app.core import security
@@ -15,7 +15,7 @@ router=APIRouter(
 @router.post("/",status_code=status.HTTP_201_CREATED)
 def CreatePatientProfile(patient_data:patient_schema.PatientProfileCreate,db:Session=Depends(get_db),current_user=Depends(security.get_current_user)):
 
-    if(current_user.role!='patient'):
+    if(current_user.role!='Patient'):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,detail="not allowed")
     
     existing_profile=db.query(patient_model.Patient).filter(patient_model.Patient.user_id==current_user.id).first()

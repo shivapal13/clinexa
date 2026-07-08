@@ -1,5 +1,5 @@
 from sqlalchemy.orm import session
-from app.database import get_db
+from app.core.database import get_db
 from app.schemas import userSchema
 from fastapi.security import OAuth2PasswordBearer
 from datetime import datetime,timedelta,timezone
@@ -7,7 +7,7 @@ from jose import JWTError,jwt
 from fastapi import Depends,HTTPException,status
 from sqlalchemy.orm import Session
 from app.models import user
-from app.config import settings
+from app.core.config import settings
 
 
 

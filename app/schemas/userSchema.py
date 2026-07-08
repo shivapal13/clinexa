@@ -1,5 +1,6 @@
 from pydantic import BaseModel,EmailStr
 from typing import Optional
+from datetime import datetime
 
 class UserRegister(BaseModel):
     name:str
@@ -9,6 +10,15 @@ class UserRegister(BaseModel):
 
     class Config:
         from_attributes=True
+
+class UserResponse(BaseModel):
+    id:int
+    name:str
+    email:EmailStr
+    role:str
+    
+    class Config:
+     from_attributes=True
 
 
 class UserLogin(BaseModel):

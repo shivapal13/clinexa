@@ -2,7 +2,7 @@ from fastapi import FastAPI,HTTPException,status,APIRouter,Depends,Response
 from app.schemas import userSchema
 from app.models import user
 from sqlalchemy.orm import Session
-from app.database import get_db
+from app.core.database import get_db
 from app.core.password_hashing import hash_password
 from fastapi.security import OAuth2PasswordRequestForm,OAuth2PasswordBearer
 from app.core import password_hashing,security
@@ -14,7 +14,7 @@ router=APIRouter(
 
 
 
-@router.post("/register",status_code=status.HTTP_201_CREATED)
+@router.post("/register",status_code=status.HTTP_201_CREATED,response_model=userSchema.UserResponse)
 def CreateUser(user_data:userSchema.UserRegister,db:Session=Depends(get_db)):
 
     hashed_password=hash_password(user_data.password)
