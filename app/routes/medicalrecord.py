@@ -4,24 +4,24 @@ from app.schemas import medicalrecord_schema
 from app.core.database import get_db
 from app.core import security
 from sqlalchemy.orm import Session
-
+from app.core.enums import AppointmentStatus
 
 router=APIRouter(
     prefix="/medicalreport",
     tags=["Medical Reports"]
 )
 
-@router.post("/{appointment_id}",status_code=status.HTTP_201_CREATED)
+@router.post("/{appointment_id}",status_code=status.HTTP_201_CREATED,response_model=medicalrecord_schema.DoctorMedicalRecordResponse)
 def CreateReport(appointment_id:int,medical_report:medicalrecord_schema.CreateMedicalRecord,
                  db:Session=Depends(get_db),current_user=Depends(security.get_current_user)):
     
-    if(current_user.role!='doctor'):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,detail="not allowed")
+    if(current_user.role!='Doctor'):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,detail="Not allowed")
     
     doctor_profile=db.query(doctor_model.Doctor).filter(doctor_model.Doctor.user_id==current_user.id).first()
 
     if doctor_profile is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="No doctor exist")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="Doctor not found")
     
     appointment=db.query(appointment_model.Appointment).filter(
                         appointment_model.Appointment.appointment_id==appointment_id).first()
@@ -30,9 +30,9 @@ def CreateReport(appointment_id:int,medical_report:medicalrecord_schema.CreateMe
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="Appointment Not found")
     
     if appointment.doctor_id!=doctor_profile.doctor_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,detail="not allowed")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,detail="Not allowed")
     
-    if appointment.status!="COMPLETED":
+    if appointment.status!=AppointmentStatus.COMPLETED.value:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,detail="Medical report can only be created for completed appointments")
     
     existing_report = db.query(
@@ -62,12 +62,48 @@ def CreateReport(appointment_id:int,medical_report:medicalrecord_schema.CreateMe
 
     return new_report
 
-@router.patch("/doctor/{record_id}")
+@router.get("/doctor",response_model=list[medicalrecord_schema.DoctorMedicalRecordResponse])
+def ViewDoctorMedicalRecords(db:Session=Depends(get_db),current_user=Depends(security.get_current_user)):
+
+    if current_user.role!='Doctor':
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,detail="Not allowed")
+    
+    doctor_profile=db.query(doctor_model.Doctor).filter(doctor_model.Doctor.user_id==current_user.id).first()
+    
+    if doctor_profile is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="Doctor not found")
+    
+    medical_record=db.query(medicalrecord_model.MedicalRecord).filter(medicalrecord_model.MedicalRecord.doctor_id==doctor_profile.doctor_id).all()
+
+    return medical_record
+
+@router.get("/doctor/{record_id}",response_model=medicalrecord_schema.DoctorMedicalRecordResponse)
+def ViewDoctorMedicalRecords(record_id:int,db:Session=Depends(get_db),current_user=Depends(security.get_current_user)):
+
+    if current_user.role!='Doctor':
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,detail="Not allowed")
+    
+    doctor_profile=db.query(doctor_model.Doctor).filter(doctor_model.Doctor.user_id==current_user.id).first()
+    
+    if doctor_profile is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="Doctor not found")
+    
+    medical_record=db.query(medicalrecord_model.MedicalRecord).filter(medicalrecord_model.MedicalRecord.doctor_id==doctor_profile.doctor_id,
+                                                                      medicalrecord_model.MedicalRecord.record_id==record_id).first()
+    if medical_record is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="Medical record not found")
+
+    return medical_record
+
+    
+    
+
+@router.patch("/{record_id}")
 def UpdateMedicalReport(record_id:int,updateMedical_data:medicalrecord_schema.UpdateMedicalRecord,
                         db:Session=Depends(get_db),current_user=Depends(security.get_current_user)):
 
-    if(current_user.role!='doctor'):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,detail="not allowed")
+    if(current_user.role!='Doctor'):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,detail="Not allowed")
     
     doctor_profiles=db.query(doctor_model.Doctor).filter(doctor_model.Doctor.user_id==current_user.id).first()
 
@@ -80,7 +116,7 @@ def UpdateMedicalReport(record_id:int,updateMedical_data:medicalrecord_schema.Up
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="Medical record do not exist")
     
     if medical_record.doctor_id!=doctor_profiles.doctor_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,detail="not allowed")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,detail="Not allowed")
     
     update_dict=updateMedical_data.model_dump(exclude_unset=True)
 
@@ -96,11 +132,11 @@ def UpdateMedicalReport(record_id:int,updateMedical_data:medicalrecord_schema.Up
     return medical_record    
 
 
-@router.get("/patient")
+@router.get("/patient",response_model=list[medicalrecord_schema.PatientMedicalRecordResponse])
 def ViewPatientRecord(db:Session=Depends(get_db),current_user=Depends(security.get_current_user)):
 
-    if(current_user.role!='patient'):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,detail="not allowed")
+    if(current_user.role!='Patient'):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,detail="Not allowed")
     
     patient_profile=db.query(patient_model.Patient).filter(patient_model.Patient.user_id==current_user.id).first()
 
@@ -116,11 +152,11 @@ def ViewPatientRecord(db:Session=Depends(get_db),current_user=Depends(security.g
 
     return medical_record
 
-@router.get("/patient/{record_id}")
+@router.get("/{record_id}",response_model=medicalrecord_schema.PatientMedicalRecordResponse)
 def ViewPatientRecord(record_id:int,db:Session=Depends(get_db),current_user=Depends(security.get_current_user)):
 
-    if(current_user.role!='patient'):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,detail="not allowed")
+    if(current_user.role!='Patient'):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,detail="Not allowed")
     
     patient_profile=db.query(patient_model.Patient).filter(patient_model.Patient.user_id==current_user.id).first()
 
@@ -136,7 +172,7 @@ def ViewPatientRecord(record_id:int,db:Session=Depends(get_db),current_user=Depe
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="Medical record not found")
     
     if medical_report.patient_id!=patient_profile.patient_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,detail="not allowed")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,detail="Not allowed")
     
     return medical_report
 

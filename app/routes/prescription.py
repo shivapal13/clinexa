@@ -11,13 +11,13 @@ router=APIRouter(
     tags=['Medical Prescription']
 )
 
-@router.post("/{record_id}",status_code=status.HTTP_201_CREATED)
+@router.post("/{record_id}",status_code=status.HTTP_201_CREATED,response_model=prescription_schema.DoctorPrescriptionResponse)
 def CreateMedicalPrescription(record_id:int,
                               prescription:prescription_schema.CreatePrescription,
                               db:Session=Depends(get_db),
                               current_user=Depends (security.get_current_user)):
 
-    if(current_user.role!='doctor'):
+    if(current_user.role!='Doctor'):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,detail="Not allowed")
     
     doctor_profiles=db.query(doctor_model.Doctor).filter(doctor_model.Doctor.user_id==current_user.id).first()
@@ -55,10 +55,26 @@ def CreateMedicalPrescription(record_id:int,
 
     return new_prescription
 
-@router.get("/patient",status_code=status.HTTP_200_OK)
-def ViewMedicalPrescription(db:Session=Depends(get_db),current_user=Depends(security.get_current_user)):
+@router.get("/doctor",response_model=list[prescription_schema.DoctorPrescriptionResponse])
+def ViewPrescriptionByDoctor(db:Session=Depends(get_db),current_user=Depends(security.get_current_user)):
 
-    if(current_user.role!='patient'):
+    if(current_user.role!='Doctor'):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,detail="Not allowed")
+    
+    doctor_profile=db.query(doctor_model.Doctor).filter(doctor_model.Doctor.user_id==current_user.id).first()
+
+    if doctor_profile is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="Doctor not found")
+    
+    prescription=db.query(prescription_model.Prescription).filter(prescription_model.Prescription.doctor_id==doctor_profile.doctor_id).all()
+
+    return prescription
+    
+
+@router.get("/patient",status_code=status.HTTP_200_OK,response_model=list[prescription_schema.PatientPrescriptionResponse])
+def ViewPrescriptionByPatient(db:Session=Depends(get_db),current_user=Depends(security.get_current_user)):
+
+    if(current_user.role!='Patient'):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,detail="Not allowed")
     
     patient_profile=db.query(patient_model.Patient).filter(patient_model.Patient.user_id==current_user.id).first()
@@ -71,10 +87,10 @@ def ViewMedicalPrescription(db:Session=Depends(get_db),current_user=Depends(secu
     
     return prescription
 
-@router.get("/patient/{prescription_id}",status_code=status.HTTP_200_OK)
+@router.get("/patient/{prescription_id}",status_code=status.HTTP_200_OK,response_model=prescription_schema.PatientPrescriptionResponse)
 def ViewPrescriptionById(prescription_id:int,db:Session=Depends(get_db),current_user=Depends(security.get_current_user)):
 
-    if(current_user.role!='patient'):
+    if(current_user.role!='Patient'):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,detail="Not allowed")
     
     patient_profile=db.query(patient_model.Patient).filter(patient_model.Patient.user_id==current_user.id).first()
@@ -93,13 +109,13 @@ def ViewPrescriptionById(prescription_id:int,db:Session=Depends(get_db),current_
     
     return prescription
     
-@router.patch("/doctor/{prescription_id}")
+@router.patch("/doctor/{prescription_id}",response_model=prescription_schema.DoctorPrescriptionResponse)
 def UpdatePrescription(prescription_id:int,
                        Update_prescription:prescription_schema.updatePrescription,
                        db:Session=Depends(get_db),
                        current_user=Depends(security.get_current_user)):
 
-    if(current_user.role!='doctor'):
+    if(current_user.role!='Doctor'):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,detail="Not allowed")
 
     doctor_profile=db.query(doctor_model.Doctor).filter(doctor_model.Doctor.user_id==current_user.id).first()
@@ -116,7 +132,13 @@ def UpdatePrescription(prescription_id:int,
     if prescription.doctor_id!=doctor_profile.doctor_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,detail="Not allowed")
 
-    update_dict=Update_prescription.model_dump(exclude_unset=True)  
+    update_dict=Update_prescription.model_dump(exclude_unset=True) 
+
+    if not update_dict:
+     raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="No fields provided for update"
+    ) 
     for key,value in update_dict.items():
         setattr(prescription,key,value)
 

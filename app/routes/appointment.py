@@ -6,8 +6,9 @@ from sqlalchemy.orm import Session
 from app.core import security
 from datetime import date,datetime
 import math
+from app.core.enums import AppointmentStatus
 from app.services.availability_service import resolve_availability
-from app.services.slot_generation import generate_slots,get_available_slots
+from app.services.slot_generation import get_available_slots
 router=APIRouter(
     prefix="/appointments",
     tags=["Appointments"]
@@ -31,33 +32,29 @@ def CreateAppointments(appointment_data:appointment_schema.AppointmentCreate,db:
     if doctor_profile is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="Doctor not found")
     
-    availability=resolve_availability(
-        doctor_id=appointment_data.doctor_id,
-        target_date=appointment_data.appointment_date,
-        db=db
-
-    )
-
-    if availability is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail=f"Doctor is not available on Date: {appointment_data.appointment_date}")
-    
-    slots=generate_slots(
-        availability.start_time,
-        availability.end_time,
-        availability.slot_duration
-    )
-    
-    if appointment_data.appointment_date<=date.today() and appointment_data.appointment_time<datetime.now().time():
+    if appointment_data.appointment_date<date.today():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,detail="Cannot book appointment for past date")
     
+    if appointment_data.appointment_date==date.today() and appointment_data.appointment_time<=datetime.now().time():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,detail="Cannot book appointment for past date")
+    
+    slots = get_available_slots(
+    doctor_id=appointment_data.doctor_id,
+    target_date=appointment_data.appointment_date,
+    db=db
+)
+    if not slots:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail=f"Doctor is not available on Date: {appointment_data.appointment_date}")
 
-    existing_appointment=db.query(appointment_model.Appointment).filter(appointment_model.Appointment.doctor_id==appointment_data.doctor_id,
-                                                                        appointment_model.Appointment.appointment_date==appointment_data.appointment_date,
-                                                                        appointment_model.Appointment.appointment_time==appointment_data.appointment_time,
-                                                                        appointment_model.Appointment.status
-                                                                        !='CANCELLED').first()
-    if existing_appointment:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT,detail="Selected Slots is already booked plz select another slot")
+    valid_slots=[
+        slot["start_time"]
+        for slot in slots
+    ]
+    
+    requested_time=appointment_data.appointment_time.strftime("%H:%M")
+
+    if requested_time not in valid_slots:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,detail="Invalid time slot")
     
     new_appointment=appointment_model.Appointment(
         patient_id=patient_profile.patient_id,
@@ -66,7 +63,7 @@ def CreateAppointments(appointment_data:appointment_schema.AppointmentCreate,db:
         reason=appointment_data.reason,
         appointment_date=appointment_data.appointment_date,
         appointment_time=appointment_data.appointment_time,
-        status="PENDING"
+        status=AppointmentStatus.PENDING.value
     )
 
     db.add(new_appointment)
@@ -75,9 +72,9 @@ def CreateAppointments(appointment_data:appointment_schema.AppointmentCreate,db:
 
     return new_appointment
 
-@router.get("/",status_code=status.HTTP_200_OK,response_model=appointment_schema.PatientAppointmentListResponse)
+@router.get("/patient",status_code=status.HTTP_200_OK,response_model=appointment_schema.PatientAppointmentListResponse)
 def GetPatientAppointments(db:Session=Depends(get_db),current_user=Depends(security.get_current_user),page: int = Query(1, ge=1),
-    page_size: int = Query(10, ge=1, le=100)):
+    page_size: int = Query(10, ge=1, le=100),view:str|None=None):
 
     if(current_user.role!='Patient'):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,detail="Not allowed")
@@ -86,9 +83,26 @@ def GetPatientAppointments(db:Session=Depends(get_db),current_user=Depends(secur
     
     if patient_profile is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="Patient not found")
-    
     query=db.query(appointment_model.Appointment).filter(appointment_model.Appointment.patient_id==patient_profile.patient_id)
+    today=date.today()
+
+    if view:
+        view=view.upper()
     
+    if view and view not in ["UPCOMING", "HISTORY"]:
+     raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="view must be UPCOMING or HISTORY"
+    )
+
+    if view=="UPCOMING":
+        query=query.filter(appointment_model.Appointment.appointment_date>=today
+    )
+        
+    elif view=="HISTORY":
+      query=query.filter(appointment_model.Appointment.appointment_date<today
+    )
+
     total=query.count()
     offset=(page-1)*page_size
     
@@ -103,7 +117,7 @@ def GetPatientAppointments(db:Session=Depends(get_db),current_user=Depends(secur
     .all()
 )
 
-    total_pages=math.ceil(total/page_size)
+    total_pages=math.ceil(total/page_size) if total > 0 else 0
 
     return {
     "total": total,
@@ -113,7 +127,7 @@ def GetPatientAppointments(db:Session=Depends(get_db),current_user=Depends(secur
     "appointments": patient_appointments
     }
 
-@router.get("/{appointment_id}",status_code=status.HTTP_200_OK,response_model=appointment_schema.PatietntAppointmentListResponse)
+@router.get("/patient/{appointment_id}",status_code=status.HTTP_200_OK,response_model=appointment_schema.PatientAppointmentsResponse)
 def GetPatientAppointmentById(appointment_id:int,db:Session=Depends(get_db),current_user=Depends(security.get_current_user)):
 
     if(current_user.role!='Patient'):
@@ -155,7 +169,10 @@ def UpdateAppointment(appointment_id:int,
     if appointment.patient_id!=patient_profile.patient_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,detail="Not Allowed")
 
-    if appointment.status in ["CANCELLED","COMPLETED"]:
+    if appointment.status in (
+        AppointmentStatus.CANCELLED.value,
+        AppointmentStatus.COMPLETED.value,
+        ):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,detail="Cannot update this appointment")
     
     update_data=update_appointment.model_dump(exclude_unset=True)
@@ -173,22 +190,20 @@ def UpdateAppointment(appointment_id:int,
     if appointment_date<date.today():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,detail="Cannot update past appointments")
     
-    if appointment_date==date.today() and appointment_time<datetime.now().time():
+    if appointment_date==date.today() and appointment_time<=datetime.now().time():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,detail="Cannot update past appointment")
-    
-    availability=resolve_availability(
-        doctor_id=appointment.doctor_id,
-        target_date=appointment_date,
-        db=db
-    )
 
-    if availability is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail=f"Doctor is not available on Date: {appointment_date}")
+    slots = get_available_slots(
+    doctor_id=appointment.doctor_id,
+    target_date=appointment_date,
+    db=db,
+    exclude_appointment_id=appointment_id
+)   
     
-    slots=generate_slots(
-        availability.start_time,
-        availability.end_time,
-        availability.slot_duration
+    if not slots:
+      raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=f"No slot are available for Date: {appointment_date}"
     )
 
     valid_slots=[
@@ -201,15 +216,6 @@ def UpdateAppointment(appointment_id:int,
     if requested_time not in valid_slots:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,detail="Invalid time Slot")
     
-    existing_appointment=db.query(appointment_model.Appointment).filter(appointment_model.Appointment.doctor_id==appointment.doctor_id,
-                                                                        appointment_model.Appointment.appointment_date==appointment_date,
-                                                                        appointment_model.Appointment.appointment_time==appointment_time,
-                                                                        appointment_model.Appointment.status!="CANCELLED",
-                                                                        appointment_model.Appointment.appointment_id!=appointment_id).first()
-    
-    if existing_appointment:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,detail="Selected Slot is already booked")
-    
     for key,value in update_data.items():
         setattr(appointment,key,value)
 
@@ -219,45 +225,74 @@ def UpdateAppointment(appointment_id:int,
     return {"message":"Appointment Updated Successfully",
             "Appointment_details":appointment}
 
-@router.get("/",status_code=status.HTTP_200_OK,response_model=appointment_schema.DoctorAppointmentListResponse)
-def GetDoctorAppointments(appointment_date:date |None=None,status:str|None=None,db:Session=Depends(get_db),current_user=Depends(security.get_current_user),page: int = Query(1, ge=1),
-    page_size: int = Query(10, ge=1, le=100)):
-
-    if(current_user.role!='Doctor'):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,detail="Not allowed")
-    
-    doctor_profile=db.query(doctor_model.Doctor).filter(doctor_model.Doctor.user_id==current_user.id).first()
-    
-    if doctor_profile is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="Doctor not found")
-    
-    query=db.query(appointment_model.Appointment).filter(appointment_model.Appointment.doctor_id==doctor_profile.doctor_id)
-    
-    if appointment_date:
-     query = query.filter(
-        appointment_model.Appointment.appointment_date == appointment_date
-    )
-    if status:
-     query = query.filter(
-        appointment_model.Appointment.status == status
-    )
-    total=query.count()
-    offset=(page-1)*page_size
-    query = query.order_by(
-    appointment_model.Appointment.appointment_date,
-    appointment_model.Appointment.appointment_time
+@router.get(
+    "/doctor",
+    status_code=status.HTTP_200_OK,
+    response_model=appointment_schema.DoctorAppointmentListResponse
 )
-    doctor_appointments=query.offset(offset).limit(page_size).all()
+def GetDoctorAppointments(
+    status: AppointmentStatus | None = None,
+    appointment_date: date | None = None,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user=Depends(security.get_current_user)
+):
 
-    total_pages=math.ceil(total/page_size)
-    
+    if current_user.role != "Doctor":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not allowed"
+        )
+
+    doctor_profile = db.query(doctor_model.Doctor).filter(
+        doctor_model.Doctor.user_id == current_user.id
+    ).first()
+
+    if doctor_profile is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Doctor not found"
+        )
+
+    query = db.query(appointment_model.Appointment).filter(
+        appointment_model.Appointment.doctor_id == doctor_profile.doctor_id
+    )
+
+    if status:
+        query = query.filter(
+            appointment_model.Appointment.status ==status.value
+        )
+
+    if appointment_date:
+        query = query.filter(
+            appointment_model.Appointment.appointment_date == appointment_date
+        )
+
+    total = query.count()
+
+    offset = (page - 1) * page_size
+
+    appointments = (
+        query
+        .order_by(
+            appointment_model.Appointment.appointment_date,
+            appointment_model.Appointment.appointment_time
+        )
+        .offset(offset)
+        .limit(page_size)
+        .all()
+    )
+
+    total_pages = math.ceil(total / page_size) if total > 0 else 0
+
     return {
-    "total": total,
-    "page": page,
-    "page_size": page_size,
-    "total_pages": total_pages,
-    "appointments": doctor_appointments
-} 
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": total_pages,
+        "appointments": appointments
+    }
 
 @router.patch("/{appointment_id}/cancel")
 def CancelDoctorAppointment(appointment_id:int,
@@ -281,7 +316,7 @@ def CancelDoctorAppointment(appointment_id:int,
 
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,detail="Not allowed")
 
-    if appointment.status in ["CANCELLED","COMPLETED"]:
+    if appointment.status in [AppointmentStatus.CANCELLED.value,AppointmentStatus.COMPLETED.value]:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,detail="Cannot cancel this appointment")
     
     if (
@@ -296,7 +331,7 @@ def CancelDoctorAppointment(appointment_id:int,
         detail="Cannot cancel a past appointment"
     )
 
-    appointment.status = "CANCELLED"
+    appointment.status =AppointmentStatus.CANCELLED.value
 
     db.commit()
     db.refresh(appointment)
@@ -308,211 +343,5 @@ def CancelDoctorAppointment(appointment_id:int,
 }
 
 
-@router.get("/patient/upcoming")
-def GetUpcomingAppointments(db:Session=Depends(get_db),current_user=Depends(security.get_current_user)):
 
-    if(current_user.role!='patient'):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,detail="Not allowed")
-    
-    patient_profile=db.query(patient_model.Patient).filter(patient_model.Patient.user_id==current_user.id).first()
-
-    if patient_profile is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="Patient not found")
-
-    today=date.today()
-
-    upcomming_appointments=db.query(appointment_model.Appointment).filter(appointment_model.Appointment.patient_id==patient_profile.patient_id,appointment_model.Appointment.appointment_date>=today).all()
-    
-    return upcomming_appointments
-
-@router.get("/patient/history")
-def GetPastAppointments(db:Session=Depends(get_db),current_user=Depends(security.get_current_user)):
-
-    if(current_user.role!='patient'):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,detail="Not allowed")
-    
-    patient_profile=db.query(patient_model.Patient).filter(patient_model.Patient.user_id==current_user.id).first()
-
-    if patient_profile is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="Patient not found")
-
-    today=date.today()
-
-    Past_appointments=db.query(appointment_model.Appointment).filter(appointment_model.Appointment.patient_id==patient_profile.patient_id,appointment_model.Appointment.appointment_date<today).all()
-
-    
-    return Past_appointments
-
-## Doctor side Logic ##
-
-@router.get("/doctor",status_code=status.HTTP_200_OK)
-def GetDoctorAppointments(db:Session=Depends(get_db),current_user=Depends(security.get_current_user)):
-
-    if(current_user.role!='doctor'):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,detail="Not allowed")
-    
-    doctor_profile=db.query(doctor_model.Doctor).filter(doctor_model.Doctor.user_id==current_user.id).first()
-
-    if doctor_profile is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="Doctor not found")
-    
-    doctor_appointments=db.query(appointment_model.Appointment).filter(appointment_model.Appointment.doctor_id==doctor_profile.doctor_id).all()    
-
-    return doctor_appointments
-
-# doctor dashboard infomation about upcoming,pending,completed,cancelled appointments
-
-@router.get("/doctor/dashboard",response_model=doctor_schema.DoctorDashboardResponse)
-def GetDoctorDashboard(db:Session=Depends(get_db),current_user=Depends(security.get_current_user)):
-
-    if(current_user.role!='doctor'):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,detail="Not allowed")
-    
-    doctor_profile=db.query(doctor_model.Doctor).filter(doctor_model.Doctor.user_id==current_user.id).first()
-
-    if doctor_profile is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="Doctor not found")
-
-    today=date.today()
-
-    upcomming_appointments=db.query(appointment_model.Appointment).filter(
-                                    appointment_model.Appointment.doctor_id==doctor_profile.doctor_id,
-                                    appointment_model.Appointment.appointment_date>=today,
-                                    appointment_model.Appointment.status=="CONFIRMED").count()
-    
-    pending_appointments=db.query(appointment_model.Appointment).filter(
-                                    appointment_model.Appointment.doctor_id==doctor_profile.doctor_id,
-                                    appointment_model.Appointment.status=="PENDING").count()
-    
-    completed_appointments=db.query(appointment_model.Appointment).filter(
-                                    appointment_model.Appointment.doctor_id==doctor_profile.doctor_id,
-                                    appointment_model.Appointment.status=="COMPLETED").count()
-    
-    cancelled_appointments=db.query(appointment_model.Appointment).filter(
-                                    appointment_model.Appointment.doctor_id==doctor_profile.doctor_id,
-                                    appointment_model.Appointment.status=="CANCELLED").count()
-    
-    rejected_appointments=db.query(appointment_model.Appointment).filter(
-                                    appointment_model.Appointment.doctor_id==doctor_profile.doctor_id,
-                                    appointment_model.Appointment.status=="REJECTED").count()
-    
-    
-    return {
-        "upcoming":upcomming_appointments,
-        "pending":pending_appointments,
-        "completed":completed_appointments,
-        "cancelled":cancelled_appointments,
-        "rejected":rejected_appointments
-    } 
-
-@router.get("/doctor/upcomming")
-def GetDoctorUpcomingAppointments(db:Session=Depends(get_db),current_user=Depends(security.get_current_user)):
-
-    if(current_user.role!='doctor'):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,detail="Not allowed")
-    
-    doctor_profile=db.query(doctor_model.Doctor).filter(doctor_model.Doctor.user_id==current_user.id).first()
-
-    if doctor_profile is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="Doctor not found")
-    today=date.today()
-
-    upcomming_appointments=db.query(appointment_model.Appointment).filter(
-                                    appointment_model.Appointment.doctor_id==doctor_profile.doctor_id,
-                                    appointment_model.Appointment.appointment_date>=today,
-                                    appointment_model.Appointment.status=="CONFIRMED").all()
-    
-    
-    
-    return upcomming_appointments
-
-@router.get("/doctor/pending")
-def GetDoctorPendingAppointments(db:Session=Depends(get_db),current_user=Depends(security.get_current_user)):
-
-    if(current_user.role!='doctor'):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,detail="Not allowed")
-    
-    doctor_profile=db.query(doctor_model.Doctor).filter(doctor_model.Doctor.user_id==current_user.id).first()
-
-    if doctor_profile is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="Doctor not found")
-
-
-    pending_appointments=db.query(appointment_model.Appointment).filter(
-                                    appointment_model.Appointment.doctor_id==doctor_profile.doctor_id,
-                                    appointment_model.Appointment.status=="PENDING").all()
-    
-    return pending_appointments
-
-@router.get("/doctor/completed")
-def GetDoctorCompletedAppointments(db:Session=Depends(get_db),current_user=Depends(security.get_current_user)):
-
-    if(current_user.role!='doctor'):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,detail="Not allowed")
-    
-    doctor_profile=db.query(doctor_model.Doctor).filter(doctor_model.Doctor.user_id==current_user.id).first()
-
-    if doctor_profile is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="Doctor not found")
-
-
-    completed_appointments=db.query(appointment_model.Appointment).filter(
-                                    appointment_model.Appointment.doctor_id==doctor_profile.doctor_id,
-                                    appointment_model.Appointment.status=="COMPLETED").all()
-    
-    return completed_appointments
-
-@router.get("/doctor/cancelled")
-def GetDoctorCancelledAppointments(db:Session=Depends(get_db),current_user=Depends(security.get_current_user)):
-
-    if(current_user.role!='doctor'):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,detail="Not allowed")
-    
-    doctor_profile=db.query(doctor_model.Doctor).filter(doctor_model.Doctor.user_id==current_user.id).first()
-
-    if doctor_profile is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="Doctor not found")
-
-
-    cancelled_appointments=db.query(appointment_model.Appointment).filter(
-                                    appointment_model.Appointment.doctor_id==doctor_profile.doctor_id,
-                                   appointment_model.Appointment.status=="CANCELLED").all()
-    
-    return cancelled_appointments
-
-@router.get("/doctor/rejected")
-def GetDoctorRejectedAppointments(db:Session=Depends(get_db),current_user=Depends(security.get_current_user)):
-
-    if(current_user.role!='doctor'):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,detail="Not allowed")
-    
-    doctor_profile=db.query(doctor_model.Doctor).filter(doctor_model.Doctor.user_id==current_user.id).first()
-
-    if doctor_profile is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="Doctor not found")
-
-
-    rejected_appointments=db.query(appointment_model.Appointment).filter(
-                                    appointment_model.Appointment.doctor_id==doctor_profile.doctor_id,
-                                    appointment_model.Appointment.status=="REJECTED").all()
-    
-    return rejected_appointments
-
-@router.get("/doctor/history")
-def GetPastAppointments(db:Session=Depends(get_db),current_user=Depends(security.get_current_user)):
-
-    if(current_user.role!='doctor'):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,detail="Not allowed")
-    
-    doctor_profile=db.query(doctor_model.Doctor).filter(doctor_model.Doctor.user_id==current_user.id).first()
-
-    if doctor_profile is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="Doctor not found")
-
-    today=date.today()
-
-    Past_appointments=db.query(appointment_model.Appointment).filter(appointment_model.Appointment.doctor_id==doctor_profile.doctor_id,appointment_model.Appointment.appointment_date<today).all()
-    
-
-    return Past_appointments
 

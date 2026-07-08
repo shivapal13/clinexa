@@ -1,7 +1,6 @@
 from pydantic import BaseModel
 from datetime import date,time
 
-
 class AppointmentCreate(BaseModel):
     doctor_id:int
     appointment_date:date
