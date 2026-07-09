@@ -10,5 +10,5 @@ class Patient(Base):
     age=Column(Integer,nullable=False)
     gender=Column(String,nullable=False)
     blood_group=Column(String,nullable=False)
-    phone_number=Column(String,nullable=False)
+    phone_number=Column(String,nullable=False,unique=True)
     address=Column(String,nullable=False) 

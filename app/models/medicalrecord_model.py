@@ -14,7 +14,7 @@ class MedicalRecord(Base):
 
     doctor_id=Column(Integer,ForeignKey("doctor_profiles.doctor_id"),nullable=False)
 
-    appointment_id=Column(Integer,ForeignKey("appointments.appointment_id"),nullable=False)
+    appointment_id=Column(Integer,ForeignKey("appointments.appointment_id"),nullable=False,unique=True)
 
     diagnosis=Column(String,nullable=False)
 

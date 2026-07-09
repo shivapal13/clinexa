@@ -13,7 +13,7 @@ class Prescription(Base):
 
     doctor_id=Column(Integer,ForeignKey("doctor_profiles.doctor_id"),nullable=False)
 
-    medical_record_id=Column(Integer,ForeignKey("medicalrecord.record_id"),nullable=False)
+    medical_record_id=Column(Integer,ForeignKey("medicalrecord.record_id"),nullable=False,unique=True)
 
     medicine_name=Column(String,nullable=False)
 

@@ -1,7 +1,6 @@
-from sqlalchemy import Column,Integer,String,ForeignKey,Date,Time,Boolean
+from sqlalchemy import Column,Integer,String,ForeignKey,Date,Time,Boolean,UniqueConstraint
 from app.core.database import Base
 from sqlalchemy.orm import relationship
-
 
 
 class CustomAvailability(Base):
@@ -25,3 +24,11 @@ class CustomAvailability(Base):
         "Doctor",
         back_populates="custom_availability"
     )
+
+__table_args__ = (
+    UniqueConstraint(
+        "doctor_id",
+        "date",
+        name="uq_doctor_date"
+    ),
+)

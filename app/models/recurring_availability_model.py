@@ -2,7 +2,7 @@ from sqlalchemy import Column,String,Integer,ForeignKey,Boolean,Date,Time
 from app.core.database import Base
 import enum 
 from sqlalchemy import Enum
-
+from sqlalchemy import UniqueConstraint
 from sqlalchemy.orm import relationship
 
 class DayOfWeek(str,enum.Enum):
@@ -37,4 +37,12 @@ class RecurringAvailability(Base):
     doctor = relationship(
     "Doctor",
     back_populates="recurring_availability"
+)
+
+__table_args__ = (
+    UniqueConstraint(
+        "doctor_id",
+        "day_of_week",
+        name="uq_doctor_day"
+    ),
 )

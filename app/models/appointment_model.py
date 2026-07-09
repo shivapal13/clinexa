@@ -1,8 +1,8 @@
 from app.core.database import Base
-from sqlalchemy import Column,String,Integer,ForeignKey,DATE,Time,DateTime
+from sqlalchemy import Column,String,Integer,ForeignKey,DATE,Time,DateTime,Enum
 from sqlalchemy.sql import func
 from app.models import patient_model,doctor_model
-
+from app.core.enums import AppointmentStatus
 
 class Appointment(Base):
     __tablename__='appointments'
@@ -21,6 +21,6 @@ class Appointment(Base):
 
     appointment_time=Column(Time,nullable=False)
 
-    status=Column(String,nullable=False,default="PENDING")
+    status=Column(Enum(AppointmentStatus),nullable=False,default=AppointmentStatus.PENDING)
 
     created_at=Column(DateTime(timezone=True),server_default=func.now())
