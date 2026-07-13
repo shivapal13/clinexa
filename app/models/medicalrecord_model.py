@@ -6,23 +6,28 @@ from sqlalchemy.sql import func
 
 
 class MedicalRecord(Base):
-    __tablename__="medicalrecord"
+    __tablename__="medical_record"
 
-    record_id=Column(Integer,primary_key=True,nullable=False)
+    medical_record_id=Column(Integer,primary_key=True,nullable=False)
 
-    patient_id=Column(Integer,ForeignKey("Patient_Profiles.patient_id"),nullable=False)
+    patient_id=Column(Integer,ForeignKey("patient_profiles.patient_id"),nullable=False)
 
     doctor_id=Column(Integer,ForeignKey("doctor_profiles.doctor_id"),nullable=False)
 
-    appointment_id=Column(Integer,ForeignKey("appointments.appointment_id"),nullable=False,unique=True)
+    appointment_id = Column(
+    Integer,
+    ForeignKey("appointments.appointment_id"),
+    nullable=False,
+    unique=True
+)
 
     diagnosis=Column(String,nullable=False)
 
     symptoms=Column(String,nullable=False)
 
-    doctor_notes=Column(Text,nullable=True)
+    clinical_notes=Column(Text,nullable=True)
 
-    follow_up_dates=Column(Date,nullable=True)
+    follow_up_date=Column(Date,nullable=True)
 
     created_at=Column(DateTime(timezone=True),server_default=func.now())
     

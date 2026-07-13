@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from datetime import time
+from datetime import time,date
 import enum
 from sqlalchemy import Enum
 
@@ -40,3 +40,15 @@ class RecurringAvailabilityUpdate(BaseModel):
     slot_duration: int|None=None
     class Config:
         from_attributes = True
+
+class SlotResponse(BaseModel):
+    start_time:time
+    end_time:time
+
+class AvailabilityResponse(BaseModel):
+    doctor_id:int
+    date:date
+    available_slots:list[SlotResponse]     
+
+    class Config:
+        from_attributes=True  

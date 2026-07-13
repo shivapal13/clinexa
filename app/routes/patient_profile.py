@@ -4,7 +4,7 @@ from app.core.database import get_db
 from app.models import patient_model
 from app.schemas import patient_schema
 from app.core import security
-
+from app.services import redis_service
 
 router=APIRouter(
     prefix="/patient/profile",
@@ -16,7 +16,8 @@ router=APIRouter(
 def CreatePatientProfile(patient_data:patient_schema.PatientProfileCreate,db:Session=Depends(get_db),current_user=Depends(security.get_current_user)):
 
     if(current_user.role!='Patient'):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,detail="not allowed")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,detail="Not allowed")
+    
     
     existing_profile=db.query(patient_model.Patient).filter(patient_model.Patient.user_id==current_user.id).first()
 
@@ -38,18 +39,33 @@ def CreatePatientProfile(patient_data:patient_schema.PatientProfileCreate,db:Ses
 
     return new_patient
 
-@router.get("/",status_code=status.HTTP_200_OK)
+@router.get("/",status_code=status.HTTP_200_OK,response_model=patient_schema.PatientSearchResponse)
 def GetPatientProfile(db:Session=Depends(get_db),current_user=Depends(security.get_current_user)):
 
-    if(current_user.role!='patient'):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,detail="not allowed")
+    if(current_user.role!='Patient'):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,detail="Not allowed")
+    
+    cache_key=f"patient:{current_user.id}"
+
+    cache_patient=redis_service.get_json(cache_key)
+
+    if cache_patient:
+        return cache_patient
     
     patient_data=db.query(patient_model.Patient).filter(patient_model.Patient.user_id==current_user.id).first()
 
     if patient_data is None:
-        raise HTTPException(status_code=status.HTTP_204_NO_CONTENT,detail="profile do not exist !")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="profile do not exist !")
     
-    return patient_data
+    patient_response=patient_schema.PatientSearchResponse.model_validate(patient_data).model_dump()
+
+    
+    redis_service.set_json(
+        cache_key,
+        patient_response,
+        ttl=300
+    )
+    return patient_response
 
 
 @router.patch("/",status_code=status.HTTP_200_OK)
@@ -57,14 +73,14 @@ def UpdatePatientProfile(Update_data:patient_schema.PatientProfileUpdate,
                          db:Session=Depends(get_db),
                          current_user=Depends(security.get_current_user)):
     
-    if(current_user.role!='patient'):
+    if(current_user.role!='Patient'):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,detail="not allowed")
     
     patient=db.query(patient_model.Patient).filter(patient_model.Patient.user_id==current_user.id)
     patient_query=patient.first()
 
     if patient_query is None:
-        raise HTTPException(status_code=status.HTTP_204_NO_CONTENT,detail="profile not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="profile not found")
     
     update_data=Update_data.model_dump(exclude_unset=True)
 
@@ -72,6 +88,9 @@ def UpdatePatientProfile(Update_data:patient_schema.PatientProfileUpdate,
         setattr(patient_query,key,value)
 
     db.commit()
+    redis_service.delete_key(
+        f"patient:{current_user.id}"
+    )
     db.refresh(patient_query) 
 
     return patient_query  
@@ -80,16 +99,19 @@ def UpdatePatientProfile(Update_data:patient_schema.PatientProfileUpdate,
 @router.delete("/")
 def DeletePatientProfile(db:Session=Depends(get_db),current_user=Depends(security.get_current_user)):
 
-    if(current_user.role!='patient'):
+    if(current_user.role!='Patient'):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,detail="not allowed")
     
     patient_data=db.query(patient_model.Patient).filter(patient_model.Patient.user_id==current_user.id).first()
 
     if patient_data is None:
-        raise HTTPException(status_code=status.HTTP_204_NO_CONTENT,detail="profile not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="profile not found")
     
     db.delete(patient_data)
     db.commit()
+    redis_service.delete_key(
+        f"patient:{current_user.id}"
+    )
 
     return Response(
         status_code=status.HTTP_204_NO_CONTENT

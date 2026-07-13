@@ -1,17 +1,17 @@
-from fastapi import FastAPI,HTTPException,status,Depends,APIRouter
+from fastapi import FastAPI,HTTPException,status,Depends,APIRouter,Response
 from app.core.database import get_db
 from app.models import recurring_availability_model,doctor_model
 from app.schemas import recurring_availability_schema
 from sqlalchemy.orm import Session
 from app.core import security
-
+from app.services import redis_service
 
 router=APIRouter(
     prefix="/doctor/availability",
     tags=['Recurrring Availability']
 )
 
-@router.post("/",status_code=status.HTTP_201_CREATED)
+@router.post("/",status_code=status.HTTP_201_CREATED,response_model=recurring_availability_schema.RecurringAvailabilityResponse)
 def Create_recurring_avalilability(recurring_data:recurring_availability_schema.RecurringAvailabilityCreate,
                          db:Session=Depends(get_db),
                         current_user=Depends(security.get_current_user)):
@@ -57,6 +57,9 @@ def Create_recurring_avalilability(recurring_data:recurring_availability_schema.
 
        db.add(new_availability)
        db.commit()
+       redis_service.delete_key(
+           f"recurring:doctor:{doctor_profile.doctor_id}"
+       )
        db.refresh(new_availability)
 
        return new_availability
@@ -66,6 +69,7 @@ def Create_recurring_avalilability(recurring_data:recurring_availability_schema.
 def GetRecurringAvailability(
     db: Session = Depends(get_db),
     current_user=Depends(security.get_current_user)
+
 ):
 
     if current_user.role != "Doctor":
@@ -83,8 +87,13 @@ def GetRecurringAvailability(
     if doctor_profile is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Doctor Profile not found"
-        )
+            detail="Doctor Profile not found")
+
+    cache_key=f"recurring:doctor:{doctor_profile.doctor_id}"
+    cache_availability=redis_service.get_json(cache_key)
+
+    if cache_availability:
+        return cache_availability
 
     availabilities = db.query(
         recurring_availability_model.RecurringAvailability
@@ -92,9 +101,17 @@ def GetRecurringAvailability(
         recurring_availability_model.RecurringAvailability.doctor_id == doctor_profile.doctor_id
     ).all()
 
-    return availabilities
+    availability_reponse=[recurring_availability_schema.RecurringAvailabilityResponse.model_validate(item).model_dump() for item in availabilities]
 
-@router.patch("/{id}")
+    redis_service.set_json(
+        cache_key,
+        availability_reponse,
+        ttl=300
+    )
+
+    return availability_reponse
+
+@router.patch("/{id}",response_model=recurring_availability_schema.RecurringAvailabilityResponse)
 def UpdateRecurringAvailability(
     id: int,
     recurring_data: recurring_availability_schema.RecurringAvailabilityUpdate,
@@ -177,6 +194,12 @@ def UpdateRecurringAvailability(
      setattr(availability, key, value)
 
     db.commit()
+    redis_service.delete_key(
+        f"recurring:doctor:{doctor_profile.doctor_id}"
+    )
+    redis_service.delete_key(
+        f"availability:doctor:{doctor_profile.doctor_id}:*"
+    )
     db.refresh(availability)
 
     return availability
@@ -226,9 +249,12 @@ def DeleteRecurringAvailability(
 
     db.delete(availability)
     db.commit()
+    redis_service.delete_key(
+        f"recurring:doctor:{doctor_profile.doctor_id}"
+    )
 
-    return {
-        "message": "Recurring availability deleted successfully"
-    }
+    return Response(
+        status_code=status.HTTP_204_NO_CONTENT
+    )
 
 

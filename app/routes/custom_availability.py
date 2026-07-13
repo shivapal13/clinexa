@@ -1,10 +1,10 @@
-from fastapi import FastAPI,HTTPException,status,APIRouter,Depends
-from app.core.database import Base,get_db
+from fastapi import HTTPException,status,APIRouter,Depends,Response
+from app.core.database import get_db
 from app.models import custom_availability_model,doctor_model
 from app.schemas import custom_availability_schema
 from sqlalchemy.orm import Session
 from app.core import security
-
+from app.services import redis_service
 router=APIRouter(
     prefix="/doctor/availability/override",
     tags=['CustomAvailability']
@@ -17,7 +17,7 @@ def CreateOverrideAvailability(
     current_user=Depends(security.get_current_user)
 ):
 
-    if current_user.role != "doctor":
+    if current_user.role != "Doctor":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not allowed"
@@ -40,7 +40,7 @@ def CreateOverrideAvailability(
     existing_override = db.query(
         custom_availability_model.CustomAvailability
     ).filter(
-        custom_availability_model.CustomAvailability.doctor_id == doctor_profile.id,
+        custom_availability_model.CustomAvailability.doctor_id == doctor_profile.doctor_id,
         custom_availability_model.CustomAvailability.date == override_data.date
     ).first()
 
@@ -75,7 +75,7 @@ def CreateOverrideAvailability(
             )
 
     new_override = custom_availability_model.CustomAvailability(
-        doctor_id=doctor_profile.id,
+        doctor_id=doctor_profile.doctor_id,
         date=override_data.date,
         start_time=override_data.start_time,
         end_time=override_data.end_time,
@@ -85,18 +85,21 @@ def CreateOverrideAvailability(
 
     db.add(new_override)
     db.commit()
+    redis_service.delete_key(
+        f"custom:doctor:{doctor_profile.doctor_id}:{new_override.date}"
+    )
     db.refresh(new_override)
 
     return new_override
 
 
-@router.get("/")
+@router.get("/",response_model=list[custom_availability_schema.CustomAvailabilityResponse])
 def GetCustomAvailabilities(
     db: Session = Depends(get_db),
     current_user=Depends(security.get_current_user)
 ):
 
-    if current_user.role != "doctor":
+    if current_user.role != "Doctor":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not allowed"
@@ -114,15 +117,30 @@ def GetCustomAvailabilities(
             detail="Doctor profile not found"
         )
 
+    cache_key=f"custom:doctor:{doctor_profile.doctor_id}"
+
+    cache_availability=redis_service.get_json(cache_key)
+
+    if cache_availability:
+        return cache_availability
+
     custom_availabilities = db.query(
         custom_availability_model.CustomAvailability
     ).filter(
-        custom_availability_model.CustomAvailability.doctor_id == doctor_profile.id
+        custom_availability_model.CustomAvailability.doctor_id == doctor_profile.doctor_id
     ).all()
 
-    return custom_availabilities
+    custom_response=[custom_availability_schema.CustomAvailabilityResponse.model_validate(item).model_dump() for item in custom_availabilities]
 
-@router.patch("/{id}")
+    redis_service.set_json(
+        cache_key,
+        custom_response,
+        ttl=300
+    )
+
+    return custom_response
+
+@router.patch("/{id}",response_model=custom_availability_schema.CustomAvailabilityResponse)
 def UpdateCustomAvailability(
     id: int,
     custom_data: custom_availability_schema.CreateCustomAvailability,
@@ -130,7 +148,7 @@ def UpdateCustomAvailability(
     current_user=Depends(security.get_current_user)
 ):
 
-    if current_user.role != "doctor":
+    if current_user.role != "Doctor":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not allowed"
@@ -145,7 +163,7 @@ def UpdateCustomAvailability(
     if doctor_profile is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Doctor profile not found"
+            detail="Not found"
         )
 
     custom_availability = db.query(
@@ -159,10 +177,11 @@ def UpdateCustomAvailability(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Custom availability not found"
         )
+    old_date=custom_availability.date
     existing_custom = db.query(
         custom_availability_model.CustomAvailability
     ).filter(
-        custom_availability_model.CustomAvailability.doctor_id == doctor_profile.id,
+        custom_availability_model.CustomAvailability.doctor_id == doctor_profile.doctor_id,
         custom_availability_model.CustomAvailability.date == custom_data.date,
         custom_availability_model.CustomAvailability.id != id
     ).first()
@@ -173,7 +192,7 @@ def UpdateCustomAvailability(
             detail="Custom availability already exists for this date"
         )
 
-    if custom_availability.doctor_id != doctor_profile.id:
+    if custom_availability.doctor_id != doctor_profile.doctor_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not allowed"
@@ -210,18 +229,27 @@ def UpdateCustomAvailability(
     custom_availability.is_available = custom_data.is_available
 
     db.commit()
+    redis_service.delete_key(
+        f"custom:doctor:{doctor_profile.doctor_id}:{custom_availability.date}"
+    )
+    redis_service.delete_key(
+        f"availability:doctor:{doctor_profile.doctor_id}:{old_date}"
+    )
+    redis_service.delete_key(
+        f"availability:doctor:{doctor_profile.doctor_id}:{custom_data.date}"
+    )
     db.refresh(custom_availability)
 
     return custom_availability
 
-@router.delete("/{id}", status_code=status.HTTP_200_OK)
+@router.delete("/{id}")
 def DeleteCustomAvailability(
     id: int,
     db: Session = Depends(get_db),
     current_user=Depends(security.get_current_user)
 ):
 
-    if current_user.role != "doctor":
+    if current_user.role != "Doctor":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not allowed"
@@ -251,7 +279,7 @@ def DeleteCustomAvailability(
             detail="Custom availability not found"
         )
 
-    if custom_availability.doctor_id != doctor_profile.id:
+    if custom_availability.doctor_id != doctor_profile.doctor_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not allowed"
@@ -259,9 +287,12 @@ def DeleteCustomAvailability(
 
     db.delete(custom_availability)
     db.commit()
+    redis_service.delete_key(
+        f"custom:doctor:{doctor_profile.doctor_id}:{custom_availability.date}"
+    )
 
-    return {
-        "message": "Custom availability deleted successfully"
-    }
+    return Response(
+        status_code=status.HTTP_204_NO_CONTENT
+    )
 
 

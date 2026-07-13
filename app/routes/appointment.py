@@ -1,7 +1,7 @@
 from fastapi import FastAPI,HTTPException,status,Depends,APIRouter,Query
 from app.core.database import get_db
-from app.models import appointment_model,patient_model,doctor_model
-from app.schemas import appointment_schema,doctor_schema
+from app.models import appointment_model,patient_model,doctor_model,user
+from app.schemas import appointment_schema
 from sqlalchemy.orm import Session
 from app.core import security
 from datetime import date,datetime
@@ -9,6 +9,7 @@ import math
 from app.core.enums import AppointmentStatus
 from app.services.availability_service import resolve_availability
 from app.services.slot_generation import get_available_slots
+from app.tasks.email_tasks import send_confirmation_email
 router=APIRouter(
     prefix="/appointments",
     tags=["Appointments"]
@@ -31,6 +32,10 @@ def CreateAppointments(appointment_data:appointment_schema.AppointmentCreate,db:
 
     if doctor_profile is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="Doctor not found")
+    
+    doctor_user = db.query(user.User).filter(
+    user.User.id == doctor_profile.user_id
+).first()
     
     if appointment_data.appointment_date<date.today():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,detail="Cannot book appointment for past date")
@@ -69,7 +74,15 @@ def CreateAppointments(appointment_data:appointment_schema.AppointmentCreate,db:
     db.add(new_appointment)
     db.commit()
     db.refresh(new_appointment)
-
+    send_confirmation_email.delay(
+    email=current_user.email,
+    patient_name=current_user.name,
+    doctor_name=doctor_user.name,
+    specialisation=doctor_profile.specialisation,
+    medical_service=appointment_data.medical_service,
+    appointment_date=str(appointment_data.appointment_date),
+    appointment_time=str(appointment_data.appointment_time),
+)
     return new_appointment
 
 @router.get("/patient",status_code=status.HTTP_200_OK,response_model=appointment_schema.PatientAppointmentListResponse)
@@ -341,7 +354,5 @@ def CancelDoctorAppointment(appointment_id:int,
     "Cancelled_by":doctor_profile.doctor_id,
     "appointment": appointment
 }
-
-
 
 

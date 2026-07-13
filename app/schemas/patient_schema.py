@@ -21,3 +21,14 @@ class PatientProfileUpdate(BaseModel):
 
     class Config:
         from_attributes=True
+
+class PatientSearchResponse(BaseModel):
+    patient_id:int
+    age:int
+    gender:str
+    blood_group:str
+    phone_number:str
+    address:str
+
+    class Config:
+        from_attributes=True

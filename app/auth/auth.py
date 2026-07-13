@@ -1,21 +1,20 @@
-from fastapi import FastAPI,HTTPException,status,APIRouter,Depends,Response
+from fastapi import HTTPException,status,APIRouter,Depends,Request
 from app.schemas import userSchema
 from app.models import user
 from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.password_hashing import hash_password
-from fastapi.security import OAuth2PasswordRequestForm,OAuth2PasswordBearer
+from fastapi.security import OAuth2PasswordRequestForm
 from app.core import password_hashing,security
-
-
+from app.tasks.email_tasks import send_confirmation_email
+from app.core.limiter import limiter
 router=APIRouter(
     tags=["UserRegistration"]
 )
 
-
-
 @router.post("/register",status_code=status.HTTP_201_CREATED,response_model=userSchema.UserResponse)
-def CreateUser(user_data:userSchema.UserRegister,db:Session=Depends(get_db)):
+@limiter.limit("5/minute")
+def CreateUser(request:Request,user_data:userSchema.UserRegister,db:Session=Depends(get_db)):
 
     hashed_password=hash_password(user_data.password)
     
@@ -34,7 +33,8 @@ def CreateUser(user_data:userSchema.UserRegister,db:Session=Depends(get_db)):
     return new_user
 
 @router.post("/login",status_code=status.HTTP_200_OK)
-def LoginUser(user_credentials:OAuth2PasswordRequestForm=Depends(),db:Session=Depends(get_db)):
+@limiter.limit("5/minute")
+def LoginUser(request:Request,user_credentials:OAuth2PasswordRequestForm=Depends(),db:Session=Depends(get_db)):
    user_data=db.query(user.User).filter(user.User.email==user_credentials.username).first()
 
    if not user_data:

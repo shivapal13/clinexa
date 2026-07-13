@@ -9,11 +9,11 @@ class Prescription(Base):
 
     prescription_id=Column(Integer,primary_key=True,nullable=False)
 
-    patient_id=Column(Integer,ForeignKey("Patient_Profiles.patient_id"),nullable=False)
+    patient_id=Column(Integer,ForeignKey("patient_profiles.patient_id"),nullable=False)
 
     doctor_id=Column(Integer,ForeignKey("doctor_profiles.doctor_id"),nullable=False)
 
-    medical_record_id=Column(Integer,ForeignKey("medicalrecord.record_id"),nullable=False,unique=True)
+    medical_record_id=Column(Integer,ForeignKey("medical_record.medical_record_id"),nullable=False,unique=True)
 
     medicine_name=Column(String,nullable=False)
 
