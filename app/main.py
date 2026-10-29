@@ -90,16 +90,22 @@ async def generic_exception_handler(request: Request, exc: Exception):
 
 app.add_middleware(SlowAPIMiddleware)
 
+import os
+
+configured_origins = os.getenv("ALLOWED_ORIGINS", "")
 origins = [
     "http://127.0.0.1:5500",
     "http://localhost:5173",
     "http://127.0.0.1:5173",
     "https://clinexa-pauo.onrender.com",
 ]
+if configured_origins:
+    origins.extend([o.strip() for o in configured_origins.split(",") if o.strip()])
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
