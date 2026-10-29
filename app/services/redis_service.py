@@ -10,37 +10,43 @@ logger = logging.getLogger(__name__)
 
 
 def get_json(key: str):
+    if redis_client is None:
+        return None
     try:
         data = redis_client.get(key)
         if data:
             return json.loads(data)
-    except (RedisError, json.JSONDecodeError):
-        logger.warning("Redis cache read failed for key %s", key, exc_info=True)
+    except (RedisError, json.JSONDecodeError) as exc:
+        logger.debug("Redis cache read skipped for key %s: %s", key, exc)
     return None
 
 
 def set_json(key: str, value: Any, ttl: int = 300):
+    if redis_client is None:
+        return
     try:
         redis_client.set(
             key,
             json.dumps(value, default=str),
             ex=ttl,
         )
-    except RedisError:
-        logger.warning("Redis cache write failed for key %s", key, exc_info=True)
+    except RedisError as exc:
+        logger.debug("Redis cache write skipped for key %s: %s", key, exc)
 
 
 def delete_key(key: str):
+    if redis_client is None:
+        return
     try:
         redis_client.delete(key)
-    except RedisError:
-        logger.warning("Redis cache invalidation failed for key %s", key, exc_info=True)
+    except RedisError as exc:
+        logger.debug("Redis cache invalidation skipped for key %s: %s", key, exc)
 
 
-# FIX: the old codebase called delete_key("pattern:*") which deleted a
-# literal key named "pattern:*". Pattern-based invalidation requires SCAN.
 def delete_pattern(pattern: str):
     """Delete all keys matching a Redis glob pattern (e.g. 'availability:doctor:5:*')."""
+    if redis_client is None:
+        return
     cursor = 0
     try:
         while True:
@@ -49,10 +55,8 @@ def delete_pattern(pattern: str):
                 redis_client.delete(*keys)
             if cursor == 0:
                 break
-    except RedisError:
-        logger.warning(
-            "Redis pattern cache invalidation failed for %s", pattern, exc_info=True
-        )
+    except RedisError as exc:
+        logger.debug("Redis pattern cache invalidation skipped for %s: %s", pattern, exc)
 
 
 def invalidate_custom_availability(doctor_id: int, target_date: date):
