@@ -4,10 +4,15 @@ from app.core.config import settings
 
 DATABASE_URL = settings.DATABASE_URL
 
+# Render and older Heroku connection strings start with postgres://, which
+# SQLAlchemy 1.4+ rejects. Normalize to postgresql://
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
 _local_hosts = ("localhost", "host.docker.internal", "127.0.0.1", "db", "postgres")
 
 # If sslmode is already specified in the query parameters (e.g. Neon, AWS RDS),
-# SQLAlchemy / psycopg2 respects the query string.
+# SQLAlchemy respects the query string.
 # Otherwise, default to sslmode=require only for external remote hosts.
 has_ssl_in_url = "sslmode=" in DATABASE_URL or "ssl=" in DATABASE_URL
 is_local_or_docker = any(h in DATABASE_URL for h in _local_hosts)
