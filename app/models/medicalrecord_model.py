@@ -1,34 +1,28 @@
-from sqlalchemy import Column,String,Integer,ForeignKey,Date,Time,DateTime
-from datetime import datetime
+from sqlalchemy import Column, String, Integer, ForeignKey, Date, DateTime, Index
 from app.core.database import Base
 from sqlalchemy.types import Text
 from sqlalchemy.sql import func
 
 
 class MedicalRecord(Base):
-    __tablename__="medical_record"
+    __tablename__ = "medical_record"
 
-    medical_record_id=Column(Integer,primary_key=True,nullable=False)
-
-    patient_id=Column(Integer,ForeignKey("patient_profiles.patient_id"),nullable=False)
-
-    doctor_id=Column(Integer,ForeignKey("doctor_profiles.doctor_id"),nullable=False)
-
+    medical_record_id = Column(Integer, primary_key=True, nullable=False)
+    patient_id = Column(Integer, ForeignKey("patient_profiles.patient_id"), nullable=False)
+    doctor_id = Column(Integer, ForeignKey("doctor_profiles.doctor_id"), nullable=False)
     appointment_id = Column(
-    Integer,
-    ForeignKey("appointments.appointment_id"),
-    nullable=False,
-    unique=True
-)
+        Integer,
+        ForeignKey("appointments.appointment_id"),
+        nullable=False,
+        unique=True,
+    )
+    diagnosis = Column(String, nullable=False)
+    symptoms = Column(String, nullable=False)
+    clinical_notes = Column(Text, nullable=True)
+    follow_up_date = Column(Date, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    diagnosis=Column(String,nullable=False)
-
-    symptoms=Column(String,nullable=False)
-
-    clinical_notes=Column(Text,nullable=True)
-
-    follow_up_date=Column(Date,nullable=True)
-
-    created_at=Column(DateTime(timezone=True),server_default=func.now())
-    
-
+    __table_args__ = (
+        Index("index_medical_record_doctor_created", "doctor_id", "created_at"),
+        Index("index_medical_record_patient_created", "patient_id", "created_at"),
+    )

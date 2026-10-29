@@ -1,260 +1,312 @@
-from fastapi import FastAPI,HTTPException,status,Depends,APIRouter,Response
-from app.core.database import get_db
-from app.models import recurring_availability_model,doctor_model
-from app.schemas import recurring_availability_schema
+from fastapi import HTTPException, status, Depends, APIRouter, Response
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
+from app.core.database import get_db
+from app.models import recurring_availability_model, doctor_model
+from app.schemas import recurring_availability_schema
 from app.core import security
 from app.services import redis_service
 
-router=APIRouter(
-    prefix="/doctor/availability",
-    tags=['Recurrring Availability']
+router = APIRouter(prefix="/doctor/availability", tags=["Recurring Availability"])
+
+
+# ---------------------------------------------------------------------------
+# POST /doctor/availability/  — create a recurring slot
+# ---------------------------------------------------------------------------
+@router.post(
+    "/",
+    status_code=status.HTTP_201_CREATED,
+    response_model=recurring_availability_schema.RecurringAvailabilityResponse,
 )
-
-@router.post("/",status_code=status.HTTP_201_CREATED,response_model=recurring_availability_schema.RecurringAvailabilityResponse)
-def Create_recurring_avalilability(recurring_data:recurring_availability_schema.RecurringAvailabilityCreate,
-                         db:Session=Depends(get_db),
-                        current_user=Depends(security.get_current_user)):
-
-       if(current_user.role!='Doctor'):
-         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,detail="Not allowed") 
-
-       doctor_profile=db.query(doctor_model.Doctor).filter(doctor_model.Doctor.user_id==current_user.id).first()
-
-       if doctor_profile is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="Doctor Profile not found")
-
-       if recurring_data.start_time>=recurring_data.end_time:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,detail="Start time must be before end time")
-
-       if recurring_data.slot_duration<=0:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,detail="Slot duration must be greater than zero")  
-
-        
-       existing_slots=db.query(recurring_availability_model.RecurringAvailability).filter(
-                                recurring_availability_model.RecurringAvailability.doctor_id==doctor_profile.doctor_id,
-                                recurring_availability_model.RecurringAvailability.day_of_week==recurring_data.day_of_week).all()   
-
-
-       for slot in existing_slots:
-          overlap=(
-                    recurring_data.start_time<slot.end_time and
-                    recurring_data.end_time>slot.start_time    
-                )  
-
-          if overlap:
-                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="slot is overlapping with  the existing slot")                   
-
-       new_availability=recurring_availability_model.RecurringAvailability(
-            
-            doctor_id=doctor_profile.doctor_id,
-            day_of_week=recurring_data.day_of_week,
-            start_time=recurring_data.start_time,
-            end_time=recurring_data.end_time,
-            slot_duration=recurring_data.slot_duration
-       )   
-
-       db.add(new_availability)
-       db.commit()
-       redis_service.delete_key(
-           f"recurring:doctor:{doctor_profile.doctor_id}"
-       )
-       db.refresh(new_availability)
-
-       return new_availability
-
-
-@router.get("/",response_model=list[recurring_availability_schema.RecurringAvailabilityResponse])
-def GetRecurringAvailability(
+def Create_recurring_availability(
+    recurring_data: recurring_availability_schema.RecurringAvailabilityCreate,
     db: Session = Depends(get_db),
-    current_user=Depends(security.get_current_user)
-
+    current_user=Depends(security.get_current_user),
 ):
-
     if current_user.role != "Doctor":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not allowed"
-        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed")
 
-    doctor_profile = db.query(
-        doctor_model.Doctor
-    ).filter(
-        doctor_model.Doctor.user_id == current_user.id
-    ).first()
-
-    if doctor_profile is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Doctor Profile not found")
-
-    cache_key=f"recurring:doctor:{doctor_profile.doctor_id}"
-    cache_availability=redis_service.get_json(cache_key)
-
-    if cache_availability:
-        return cache_availability
-
-    availabilities = db.query(
-        recurring_availability_model.RecurringAvailability
-    ).filter(
-        recurring_availability_model.RecurringAvailability.doctor_id == doctor_profile.doctor_id
-    ).all()
-
-    availability_reponse=[recurring_availability_schema.RecurringAvailabilityResponse.model_validate(item).model_dump() for item in availabilities]
-
-    redis_service.set_json(
-        cache_key,
-        availability_reponse,
-        ttl=300
+    doctor_profile = (
+        db.query(doctor_model.Doctor)
+        .filter(doctor_model.Doctor.user_id == current_user.id)
+        .first()
     )
-
-    return availability_reponse
-
-@router.patch("/{id}",response_model=recurring_availability_schema.RecurringAvailabilityResponse)
-def UpdateRecurringAvailability(
-    id: int,
-    recurring_data: recurring_availability_schema.RecurringAvailabilityUpdate,
-    db: Session = Depends(get_db),
-    current_user=Depends(security.get_current_user)
-):
-
-    if current_user.role != "Doctor":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not allowed"
-        )
-
-    doctor_profile = db.query(
-        doctor_model.Doctor
-    ).filter(
-        doctor_model.Doctor.user_id == current_user.id
-    ).first()
-
     if doctor_profile is None:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Doctor profile not found"
-        )
-
-    availability = db.query(
-        recurring_availability_model.RecurringAvailability
-    ).filter(
-        recurring_availability_model.RecurringAvailability.id == id
-    ).first()
-
-    if availability is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Availability not found"
-        )
-
-    if availability.doctor_id != doctor_profile.doctor_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not allowed"
+            status_code=status.HTTP_404_NOT_FOUND, detail="Doctor profile not found"
         )
 
     if recurring_data.start_time >= recurring_data.end_time:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Start time must be before end time"
+            detail="Start time must be before end time",
         )
 
-    if recurring_data.slot_duration is not None and recurring_data.slot_duration<=0:
+    if recurring_data.slot_duration <= 0:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Slot duration must be greater than zero"
+            detail="Slot duration must be greater than zero",
         )
 
-    existing_slots = db.query(
-        recurring_availability_model.RecurringAvailability
-    ).filter(
-        recurring_availability_model.RecurringAvailability.doctor_id == doctor_profile.doctor_id,
-        recurring_availability_model.RecurringAvailability.day_of_week == recurring_data.day_of_week,
-        recurring_availability_model.RecurringAvailability.id != id
-    ).all()
+    existing_slots = (
+        db.query(recurring_availability_model.RecurringAvailability)
+        .filter(
+            recurring_availability_model.RecurringAvailability.doctor_id
+            == doctor_profile.doctor_id,
+            recurring_availability_model.RecurringAvailability.day_of_week
+            == recurring_data.day_of_week,
+        )
+        .all()
+    )
 
     for slot in existing_slots:
-
-        overlap = (
-            recurring_data.start_time < slot.end_time
-            and
-            recurring_data.end_time > slot.start_time
-        )
-
-        if overlap:
+        if recurring_data.start_time < slot.end_time and recurring_data.end_time > slot.start_time:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Availability overlaps with existing schedule"
+                detail="Slot overlaps with an existing slot",
             )
 
-    update_data=recurring_data.model_dump(exclude_unset=True)
-    for key, value in update_data.items():
-     setattr(availability, key, value)
-
-    db.commit()
-    redis_service.delete_key(
-        f"recurring:doctor:{doctor_profile.doctor_id}"
+    new_availability = recurring_availability_model.RecurringAvailability(
+        doctor_id=doctor_profile.doctor_id,
+        day_of_week=recurring_data.day_of_week,
+        start_time=recurring_data.start_time,
+        end_time=recurring_data.end_time,
+        slot_duration=recurring_data.slot_duration,
     )
-    redis_service.delete_key(
+
+    db.add(new_availability)
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Schedule slot conflicts with an existing entry",
+        ) from exc
+
+    redis_service.delete_key(f"recurring:doctor:{doctor_profile.doctor_id}")
+    redis_service.delete_pattern(
         f"availability:doctor:{doctor_profile.doctor_id}:*"
     )
-    db.refresh(availability)
+    db.refresh(new_availability)
 
+    return new_availability
+
+
+# ---------------------------------------------------------------------------
+# GET /doctor/availability/  — list all recurring slots for the logged-in doctor
+# ---------------------------------------------------------------------------
+@router.get(
+    "/",
+    response_model=list[recurring_availability_schema.RecurringAvailabilityResponse],
+)
+def GetRecurringAvailability(
+    db: Session = Depends(get_db),
+    current_user=Depends(security.get_current_user),
+):
+    if current_user.role != "Doctor":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed")
+
+    doctor_profile = (
+        db.query(doctor_model.Doctor)
+        .filter(doctor_model.Doctor.user_id == current_user.id)
+        .first()
+    )
+    if doctor_profile is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Doctor profile not found"
+        )
+
+    cache_key = f"recurring:doctor:{doctor_profile.doctor_id}"
+    cached = redis_service.get_json(cache_key)
+    if cached:
+        return cached
+
+    availabilities = (
+        db.query(recurring_availability_model.RecurringAvailability)
+        .filter(
+            recurring_availability_model.RecurringAvailability.doctor_id
+            == doctor_profile.doctor_id
+        )
+        .all()
+    )
+
+    response = [
+        recurring_availability_schema.RecurringAvailabilityResponse.model_validate(
+            item
+        ).model_dump()
+        for item in availabilities
+    ]
+
+    redis_service.set_json(cache_key, response, ttl=300)
+    return response
+
+
+# ---------------------------------------------------------------------------
+# PATCH /doctor/availability/{id}  — partial update a recurring slot
+# ---------------------------------------------------------------------------
+@router.patch(
+    "/{id}",
+    response_model=recurring_availability_schema.RecurringAvailabilityResponse,
+)
+def UpdateRecurringAvailability(
+    id: int,
+    recurring_data: recurring_availability_schema.RecurringAvailabilityUpdate,
+    db: Session = Depends(get_db),
+    current_user=Depends(security.get_current_user),
+):
+    if current_user.role != "Doctor":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed")
+
+    doctor_profile = (
+        db.query(doctor_model.Doctor)
+        .filter(doctor_model.Doctor.user_id == current_user.id)
+        .first()
+    )
+    if doctor_profile is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Doctor profile not found"
+        )
+
+    availability = (
+        db.query(recurring_availability_model.RecurringAvailability)
+        .filter(recurring_availability_model.RecurringAvailability.id == id)
+        .first()
+    )
+    if availability is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Availability not found"
+        )
+
+    if availability.doctor_id != doctor_profile.doctor_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed")
+
+    # FIX: schema fields are Optional for PATCH — resolve effective values from
+    # the existing DB row so None >= None never happens.
+    effective_start = (
+        recurring_data.start_time
+        if recurring_data.start_time is not None
+        else availability.start_time
+    )
+    effective_end = (
+        recurring_data.end_time
+        if recurring_data.end_time is not None
+        else availability.end_time
+    )
+    effective_day = (
+        recurring_data.day_of_week
+        if recurring_data.day_of_week is not None
+        else availability.day_of_week
+    )
+
+    if effective_start >= effective_end:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Start time must be before end time",
+        )
+
+    if (
+        recurring_data.slot_duration is not None
+        and recurring_data.slot_duration <= 0
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Slot duration must be greater than zero",
+        )
+
+    existing_slots = (
+        db.query(recurring_availability_model.RecurringAvailability)
+        .filter(
+            recurring_availability_model.RecurringAvailability.doctor_id
+            == doctor_profile.doctor_id,
+            recurring_availability_model.RecurringAvailability.day_of_week
+            == effective_day,
+            recurring_availability_model.RecurringAvailability.id != id,
+        )
+        .all()
+    )
+
+    for slot in existing_slots:
+        if effective_start < slot.end_time and effective_end > slot.start_time:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Availability overlaps with existing schedule",
+            )
+
+    update_data = recurring_data.model_dump(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(availability, key, value)
+
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Schedule slot conflicts with an existing entry",
+        ) from exc
+
+    redis_service.delete_key(f"recurring:doctor:{doctor_profile.doctor_id}")
+    # FIX: use delete_pattern — delete_key("...:*") deletes a literal key named "*"
+    redis_service.delete_pattern(
+        f"availability:doctor:{doctor_profile.doctor_id}:*"
+    )
+
+    db.refresh(availability)
     return availability
 
-@router.delete("/{id}", status_code=status.HTTP_200_OK)
+
+# ---------------------------------------------------------------------------
+# DELETE /doctor/availability/{id}  — remove a recurring slot
+# ---------------------------------------------------------------------------
+@router.delete("/{id}", status_code=status.HTTP_204_NO_CONTENT)
 def DeleteRecurringAvailability(
     id: int,
     db: Session = Depends(get_db),
-    current_user=Depends(security.get_current_user)
+    current_user=Depends(security.get_current_user),
 ):
-
     if current_user.role != "Doctor":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not allowed"
-        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed")
 
-    doctor_profile = db.query(
-        doctor_model.Doctor
-    ).filter(
-        doctor_model.Doctor.user_id == current_user.id
-    ).first()
-
+    doctor_profile = (
+        db.query(doctor_model.Doctor)
+        .filter(doctor_model.Doctor.user_id == current_user.id)
+        .first()
+    )
     if doctor_profile is None:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Doctor profile not found"
+            status_code=status.HTTP_404_NOT_FOUND, detail="Doctor profile not found"
         )
 
-    availability = db.query(
-        recurring_availability_model.RecurringAvailability
-    ).filter(
-        recurring_availability_model.RecurringAvailability.id == id
-    ).first()
-
+    availability = (
+        db.query(recurring_availability_model.RecurringAvailability)
+        .filter(recurring_availability_model.RecurringAvailability.id == id)
+        .first()
+    )
     if availability is None:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Availability not found"
+            status_code=status.HTTP_404_NOT_FOUND, detail="Availability not found"
         )
 
     if availability.doctor_id != doctor_profile.doctor_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not allowed to delete this availability"
+            detail="Not allowed to delete this availability",
         )
 
-    db.delete(availability)
-    db.commit()
-    redis_service.delete_key(
-        f"recurring:doctor:{doctor_profile.doctor_id}"
+    try:
+        db.delete(availability)
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot delete recurring availability",
+        ) from exc
+
+    redis_service.delete_key(f"recurring:doctor:{doctor_profile.doctor_id}")
+    redis_service.delete_pattern(
+        f"availability:doctor:{doctor_profile.doctor_id}:*"
     )
 
-    return Response(
-        status_code=status.HTTP_204_NO_CONTENT
-    )
-
-
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

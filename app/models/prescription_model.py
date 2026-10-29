@@ -1,31 +1,23 @@
 from app.core.database import Base
-from sqlalchemy import Column,String,Integer,Date,Time,DateTime,ForeignKey,Text
+from sqlalchemy import Column, String, Integer, DateTime, ForeignKey, Text, Index
 from sqlalchemy.sql import func
 
 
 class Prescription(Base):
+    __tablename__ = "prescription"
 
-    __tablename__="prescription"
+    prescription_id = Column(Integer, primary_key=True, nullable=False)
+    patient_id = Column(Integer, ForeignKey("patient_profiles.patient_id"), nullable=False)
+    doctor_id = Column(Integer, ForeignKey("doctor_profiles.doctor_id"), nullable=False)
+    medical_record_id = Column(Integer, ForeignKey("medical_record.medical_record_id"), nullable=False, unique=True)
+    medicine_name = Column(String, nullable=False)
+    dosage = Column(String, nullable=False)
+    frequency = Column(String, nullable=False)
+    duration = Column(String, nullable=False)
+    instructions = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    prescription_id=Column(Integer,primary_key=True,nullable=False)
-
-    patient_id=Column(Integer,ForeignKey("patient_profiles.patient_id"),nullable=False)
-
-    doctor_id=Column(Integer,ForeignKey("doctor_profiles.doctor_id"),nullable=False)
-
-    medical_record_id=Column(Integer,ForeignKey("medical_record.medical_record_id"),nullable=False,unique=True)
-
-    medicine_name=Column(String,nullable=False)
-
-    dosage=Column(String,nullable=False)
-
-    frequency=Column(String,nullable=False)
-
-    duration=Column(String,nullable=False)
-
-    instructions=Column(Text,nullable=True)
-
-    created_at=Column(DateTime(timezone=True),server_default=func.now())
-
-
-
+    __table_args__ = (
+        Index("index_prescription_doctor_created", "doctor_id", "created_at"),
+        Index("index_prescription_patient_created", "patient_id", "created_at"),
+    )

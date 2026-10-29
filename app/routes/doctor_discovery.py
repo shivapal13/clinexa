@@ -15,18 +15,20 @@ router=APIRouter(
 @router.get("/{doctor_id}/available-slots",response_model=AvailabilityResponse)
 def GetAvailableSlots(doctor_id:int,target_date:date,db:Session=Depends(get_db)):
 
+    doctor=db.query(doctor_model.Doctor).filter(
+        doctor_model.Doctor.doctor_id == doctor_id,
+        doctor_model.Doctor.verification_status == "VERIFIED",
+    ).first()
+
+    if doctor is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="Doctor not found")
+
     cache_key=f"availability:doctor:{doctor_id}:{target_date}"
 
     cache_slots=redis_service.get_json(cache_key)
 
     if cache_slots:
        return cache_slots
-    
-    doctor=db.query(doctor_model.Doctor).filter(doctor_model.Doctor.doctor_id==doctor_id).first()
-    
-
-    if doctor is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="Doctor not found")
     
     slots=get_available_slots( doctor_id=doctor_id, target_date=target_date, db=db )
 
