@@ -163,8 +163,12 @@ pip install -r requirements.txt
 DATABASE_URL=
 
 SECRET_KEY=
+ALGORITHM=HS256
+ACCESS_TOKEN_EXPIRE_MINUTES=30
 
 REDIS_URL=
+
+POSTGRES_PASSWORD=
 
 MAIL_USERNAME=
 
@@ -173,7 +177,18 @@ MAIL_PASSWORD=
 MAIL_FROM=
 
 MAIL_SERVER=smtp.gmail.com
+MAIL_PORT=587
+MAIL_STARTTLS=true
+MAIL_SSL_TLS=false
+
+# Comma-separated email addresses allowed to review doctor profiles.
+# These addresses must also have a registered Clinexa account.
+ADMIN_EMAILS=reviewer@example.com
 ```
+
+Keep `.env` out of source control. Use a unique database password and rotate any
+credential that was previously committed or shared. `POSTGRES_PASSWORD` is
+required by Docker Compose and must match the password in `DATABASE_URL`.
 
 ---
 
@@ -190,6 +205,24 @@ alembic upgrade head
 ```bash
 docker compose up --build
 ```
+
+## Doctor profile review
+
+Doctor profiles are private from patient search and booking until reviewed.
+Set `ADMIN_EMAILS` to a comma-separated allowlist of reviewer email addresses.
+Each reviewer signs in with a normal Clinexa account; public registration does
+not grant reviewer access. With that account's bearer token, use
+`GET /doctor/profile/admin/pending` to view submissions, then
+`PATCH /doctor/profile/admin/{doctor_id}/verification` with
+`{"verification_status":"VERIFIED"}` or `{"verification_status":"REJECTED"}`.
+Reviewers should independently verify the submitted professional license
+number against the relevant licensing authority before approving.
+
+Admins can also create a profile for an existing Doctor account that does not
+have one. In the frontend, use **Doctor setup**; the admin API lists eligible
+accounts at `GET /doctor/profile/admin/accounts` and creates a profile at
+`POST /doctor/profile/admin/accounts/{user_id}/profile`. Profiles created this
+way remain pending and are not visible for discovery or booking until approved.
 
 Swagger
 
