@@ -9,6 +9,9 @@ DATABASE_URL = settings.DATABASE_URL
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
 _local_hosts = ("localhost", "host.docker.internal", "127.0.0.1", "db", "postgres")
 
 # If sslmode is already specified in the query parameters (e.g. Neon, AWS RDS),
